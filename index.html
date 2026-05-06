@@ -20,6 +20,7 @@
       <button class="tab active" data-view="dashboard">Dashboard</button>
       <button class="tab" data-view="equipment">Equipment</button>
       <button class="tab" data-view="rentals">Rentals</button>
+      <button class="tab" data-view="customers">Customers</button>
       <button class="tab" data-view="schedule">Schedule</button>
       <button class="tab" data-view="map">Map</button>
       <button class="tab" data-view="maintenance">Maintenance</button>
@@ -109,6 +110,26 @@
             </tr>
           </thead>
           <tbody id="rent-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- CUSTOMERS -->
+    <section class="view" id="view-customers">
+      <div class="toolbar">
+        <input type="search" id="cust-search" placeholder="Search by name or phone..." />
+        <button class="btn primary" id="cust-add-btn">+ Add Customer</button>
+      </div>
+      <div class="card">
+        <table class="data">
+          <thead>
+            <tr>
+              <th>Name</th><th>Phone</th><th>Total Rentals</th>
+              <th>Currently Out</th><th>Last Rental</th><th>Last Equipment</th>
+              <th>Last Duration</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="cust-tbody"></tbody>
         </table>
       </div>
     </section>

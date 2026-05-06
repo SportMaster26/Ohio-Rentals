@@ -28,9 +28,13 @@ const db = loadDb();
 function loadDb() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const data = JSON.parse(raw);
+      if (!data.customers) data.customers = [];
+      return data;
+    }
   } catch (e) { console.error('load failed', e); }
-  return { equipment: [], rentals: [], maintenance: [] };
+  return { equipment: [], rentals: [], maintenance: [], customers: [] };
 }
 
 function saveDb() {
@@ -42,6 +46,80 @@ function uid(prefix) {
 }
 
 function nowIso() { return new Date().toISOString(); }
+
+// ---------- Customers ----------
+
+function normalizeName(s) {
+  return (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function findCustomerByName(name) {
+  const key = normalizeName(name);
+  if (!key) return null;
+  return db.customers.find(c => c.nameKey === key) || null;
+}
+
+function ensureCustomer(name, phone) {
+  const key = normalizeName(name);
+  if (!key) return null;
+  let c = findCustomerByName(name);
+  if (c) {
+    // Keep the most recently provided phone if user typed a new one
+    if (phone && !c.phone) c.phone = phone;
+    return c;
+  }
+  c = {
+    id: uid('cust'),
+    name: name.trim(),
+    nameKey: key,
+    phone: phone || '',
+    notes: '',
+    createdAt: nowIso(),
+  };
+  db.customers.push(c);
+  return c;
+}
+
+function customerRentals(c) {
+  return db.rentals
+    .filter(r => normalizeName(r.customer) === c.nameKey)
+    .sort((a, b) => new Date(b.timeOut) - new Date(a.timeOut));
+}
+
+function customerStats(c) {
+  const rentals = customerRentals(c);
+  const active = rentals.filter(r => !r.actualReturn);
+  const last = rentals[0] || null;
+  let lastDurationMs = 0;
+  if (last) {
+    const end = last.actualReturn ? new Date(last.actualReturn) : new Date(last.timeIn);
+    lastDurationMs = Math.max(0, end - new Date(last.timeOut));
+  }
+  return {
+    rentals,
+    count: rentals.length,
+    activeCount: active.length,
+    last,
+    lastDurationMs,
+  };
+}
+
+function fmtDuration(ms) {
+  if (!ms || ms < 0) return '—';
+  const days = Math.floor(ms / 864e5);
+  const hours = Math.floor((ms % 864e5) / 36e5);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h`;
+  const mins = Math.floor(ms / 60000);
+  return `${mins}m`;
+}
+
+// Backfill customers from existing rentals (run once on startup).
+function backfillCustomers() {
+  for (const r of db.rentals) {
+    if (r.customer) ensureCustomer(r.customer, r.customerPhone);
+  }
+}
 
 // ---------- Status logic ----------
 
@@ -336,6 +414,180 @@ function renderRentals() {
   }).join('') : `<tr><td colspan="8" class="text-muted" style="text-align:center;padding:24px">No rentals yet. Click "+ New Rental" to schedule one.</td></tr>`;
 }
 
+// ---------- Render: customers ----------
+
+function renderCustomers() {
+  const search = (document.getElementById('cust-search').value || '').toLowerCase();
+  const tbody = document.getElementById('cust-tbody');
+
+  let rows = [...db.customers].map(c => ({ c, stats: customerStats(c) }));
+  if (search) {
+    rows = rows.filter(({ c }) =>
+      (c.name + ' ' + (c.phone || '')).toLowerCase().includes(search)
+    );
+  }
+  rows.sort((a, b) => {
+    const da = a.stats.last ? new Date(a.stats.last.timeOut) : 0;
+    const dbb = b.stats.last ? new Date(b.stats.last.timeOut) : 0;
+    return dbb - da;
+  });
+
+  tbody.innerHTML = rows.length ? rows.map(({ c, stats }) => {
+    const last = stats.last;
+    return `
+      <tr>
+        <td><strong>${c.name}</strong></td>
+        <td>${c.phone || '—'}</td>
+        <td>${stats.count}</td>
+        <td>${stats.activeCount > 0 ? badge('rented') : '—'}</td>
+        <td class="nowrap">${last ? fmtDt(last.timeOut) : '—'}</td>
+        <td>${last ? eqName(last.equipmentId) : '—'}</td>
+        <td>${fmtDuration(stats.lastDurationMs)}</td>
+        <td class="row-actions">
+          <button class="btn small" data-act="cust-history" data-id="${c.id}">History</button>
+          <button class="btn small" data-act="cust-edit" data-id="${c.id}">Edit</button>
+        </td>
+      </tr>`;
+  }).join('') : `<tr><td colspan="8" class="text-muted" style="text-align:center;padding:24px">No customers yet. They'll show up automatically when you create rentals.</td></tr>`;
+}
+
+// ---------- Customer forms ----------
+
+function customerForm(c) {
+  const isEdit = !!c;
+  c = c || { id: '', name: '', phone: '', notes: '' };
+  return `
+    <form id="cust-form">
+      <div class="form-row two-up">
+        <div>
+          <label>Name *</label>
+          <input name="name" required value="${c.name || ''}" />
+        </div>
+        <div>
+          <label>Phone</label>
+          <input name="phone" value="${c.phone || ''}" />
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Notes</label>
+        <textarea name="notes">${c.notes || ''}</textarea>
+      </div>
+      <div class="form-actions">
+        ${isEdit ? `<button type="button" class="btn danger" id="cust-delete">Delete</button>` : ''}
+        <button type="button" class="btn ghost" id="cust-cancel">Cancel</button>
+        <button type="submit" class="btn primary">${isEdit ? 'Save' : 'Add'}</button>
+      </div>
+    </form>`;
+}
+
+function bindCustomerForm(existing) {
+  document.getElementById('cust-cancel').addEventListener('click', closeModal);
+  if (existing) {
+    document.getElementById('cust-delete').addEventListener('click', () => {
+      const stats = customerStats(existing);
+      if (stats.count > 0) {
+        if (!confirm(`${existing.name} has ${stats.count} rental(s) on file. Delete the customer record anyway? (Rentals stay.)`)) return;
+      } else {
+        if (!confirm(`Delete ${existing.name}?`)) return;
+      }
+      db.customers = db.customers.filter(x => x.id !== existing.id);
+      saveDb(); closeModal(); render();
+      toast('Customer deleted.');
+    });
+  }
+  document.getElementById('cust-form').addEventListener('submit', e => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const newName = (fd.get('name') || '').trim();
+    if (!newName) return toast('Name is required.', 'error');
+    const newPhone = fd.get('phone') || '';
+    const newNotes = fd.get('notes') || '';
+
+    if (existing) {
+      const oldKey = existing.nameKey;
+      const newKey = normalizeName(newName);
+      // If name changed, update rentals that referenced the old name.
+      if (oldKey !== newKey) {
+        // Avoid colliding with another existing customer.
+        const collision = db.customers.find(c => c.id !== existing.id && c.nameKey === newKey);
+        if (collision) {
+          if (!confirm(`A customer named "${collision.name}" already exists. Merge into them?`)) return;
+          // Merge: re-point all rentals from existing -> collision name, keep collision record.
+          for (const r of db.rentals) {
+            if (normalizeName(r.customer) === oldKey) r.customer = collision.name;
+          }
+          db.customers = db.customers.filter(c => c.id !== existing.id);
+          collision.phone = collision.phone || newPhone;
+          saveDb(); closeModal(); render();
+          toast('Customers merged.');
+          return;
+        }
+        for (const r of db.rentals) {
+          if (normalizeName(r.customer) === oldKey) r.customer = newName;
+        }
+      }
+      existing.name = newName;
+      existing.nameKey = normalizeName(newName);
+      existing.phone = newPhone;
+      existing.notes = newNotes;
+    } else {
+      const dup = findCustomerByName(newName);
+      if (dup) return toast('That customer already exists.', 'error');
+      db.customers.push({
+        id: uid('cust'),
+        name: newName,
+        nameKey: normalizeName(newName),
+        phone: newPhone,
+        notes: newNotes,
+        createdAt: nowIso(),
+      });
+    }
+    saveDb(); closeModal(); render();
+    toast(existing ? 'Customer updated.' : 'Customer added.');
+  });
+}
+
+function customerHistory(c) {
+  const stats = customerStats(c);
+  const rows = stats.rentals.map(r => {
+    const s = rentalStatus(r);
+    const end = r.actualReturn ? new Date(r.actualReturn) : new Date(r.timeIn);
+    const dur = Math.max(0, end - new Date(r.timeOut));
+    return `
+      <tr>
+        <td>${eqName(r.equipmentId)}</td>
+        <td class="nowrap">${fmtDt(r.timeOut)}</td>
+        <td class="nowrap">${r.actualReturn ? fmtDt(r.actualReturn) : fmtDt(r.timeIn) + ' (due)'}</td>
+        <td>${fmtDuration(dur)}</td>
+        <td>${badge(s)}</td>
+        <td>${r.location || '—'}</td>
+        <td><button class="btn small" data-act="edit-rental" data-id="${r.id}">Open</button></td>
+      </tr>`;
+  }).join('');
+  return `
+    <div style="margin-bottom:12px">
+      <div><strong>${c.name}</strong>${c.phone ? ' · ' + c.phone : ''}</div>
+      <div class="text-muted" style="font-size:12px">
+        ${stats.count} rental${stats.count === 1 ? '' : 's'}
+        ${stats.activeCount > 0 ? ` · ${stats.activeCount} currently out` : ''}
+      </div>
+      ${c.notes ? `<div class="text-muted" style="margin-top:6px">${c.notes}</div>` : ''}
+    </div>
+    ${rows ? `
+      <table class="data">
+        <thead><tr>
+          <th>Equipment</th><th>Out</th><th>In / Due</th><th>Duration</th><th>Status</th><th>Location</th><th></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    ` : '<div class="empty text-muted">No rentals yet.</div>'}
+    <div class="form-actions">
+      <button type="button" class="btn ghost" id="cust-hist-close">Close</button>
+      <button type="button" class="btn" data-act="cust-edit" data-id="${c.id}">Edit Customer</button>
+    </div>
+  `;
+}
+
 // ---------- Render: schedule (calendar) ----------
 
 let calendarMonth = (() => {
@@ -616,6 +868,7 @@ function render() {
   if (view === 'dashboard') renderDashboard();
   if (view === 'equipment') renderEquipment();
   if (view === 'rentals') renderRentals();
+  if (view === 'customers') renderCustomers();
   if (view === 'schedule') renderSchedule();
   if (view === 'map') renderMap();
   if (view === 'maintenance') renderMaintenance();
@@ -730,7 +983,10 @@ function rentalForm(r) {
       <div class="form-row two-up">
         <div>
           <label>Customer *</label>
-          <input name="customer" required value="${r.customer || ''}" />
+          <input name="customer" required value="${r.customer || ''}" list="customer-list" autocomplete="off" />
+          <datalist id="customer-list">
+            ${db.customers.map(c => `<option value="${c.name.replace(/"/g,'&quot;')}"></option>`).join('')}
+          </datalist>
         </div>
         <div>
           <label>Phone</label>
@@ -811,6 +1067,14 @@ function toLocalInput(iso) {
 function bindRentalForm(existing) {
   const form = document.getElementById('rent-form');
   document.getElementById('rent-cancel').addEventListener('click', closeModal);
+
+  // When user picks an existing customer name, auto-fill phone if empty.
+  const custInput = form.querySelector('input[name=customer]');
+  const phoneInput = form.querySelector('input[name=customerPhone]');
+  custInput?.addEventListener('change', () => {
+    const match = findCustomerByName(custInput.value);
+    if (match && match.phone && !phoneInput.value) phoneInput.value = match.phone;
+  });
 
   // Working copies
   const out = (existing?.checklistOut || DEFAULT_CHECKLIST_OUT.map(text => ({ text, checked: false }))).map(x => ({ ...x }));
@@ -915,6 +1179,7 @@ function bindRentalForm(existing) {
       saved = { id: uid('r'), actualReturn: '', ...payload };
       db.rentals.push(saved);
     }
+    ensureCustomer(saved.customer, saved.customerPhone);
     saveDb(); closeModal(); render();
     queueGeocode(saved);
     toast(existing ? 'Rental updated.' : 'Rental created.');
@@ -987,6 +1252,11 @@ document.getElementById('eq-add-btn').addEventListener('click', () => {
   openModal('Add Equipment', equipmentForm(null));
   bindEquipmentForm(null);
 });
+document.getElementById('cust-add-btn').addEventListener('click', () => {
+  openModal('Add Customer', customerForm(null));
+  bindCustomerForm(null);
+});
+document.getElementById('cust-search').addEventListener('input', renderCustomers);
 document.getElementById('rent-add-btn').addEventListener('click', () => {
   if (!db.equipment.length) {
     toast('Add equipment first before scheduling rentals.', 'error');
@@ -1031,6 +1301,16 @@ document.body.addEventListener('click', e => {
     toast('Equipment checked in. Open it to complete the return checklist.');
   } else if (act === 'clear-maint') {
     clearMaintenance(id);
+  } else if (act === 'cust-edit') {
+    const c = db.customers.find(x => x.id === id);
+    if (!c) return;
+    openModal('Edit Customer', customerForm(c));
+    bindCustomerForm(c);
+  } else if (act === 'cust-history') {
+    const c = db.customers.find(x => x.id === id);
+    if (!c) return;
+    openModal(`Customer — ${c.name}`, customerHistory(c));
+    document.getElementById('cust-hist-close')?.addEventListener('click', closeModal);
   }
 });
 
@@ -1084,6 +1364,8 @@ document.getElementById('import-file').addEventListener('change', async e => {
     db.equipment = data.equipment;
     db.rentals = data.rentals;
     db.maintenance = data.maintenance || [];
+    db.customers = data.customers || [];
+    backfillCustomers();
     saveDb(); render();
     toast('Backup restored.');
   } catch (err) {
@@ -1102,6 +1384,10 @@ if (!db.equipment.length && !db.rentals.length) {
   db.equipment = seed;
   saveDb();
 }
+
+// Backfill customer records from any existing rentals
+backfillCustomers();
+saveDb();
 
 // Initial render
 render();
