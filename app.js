@@ -353,11 +353,16 @@ function renderEquipment() {
       : eq.maintenanceDue
         ? `due ${fmtDate(eq.maintenanceDue)}`
         : '—';
+    const subtitle = [eq.make, eq.model].filter(Boolean).join(' ');
     return `
       <tr>
         <td class="nowrap">${eq.unitId || eq.id}</td>
-        <td><strong>${eq.name}</strong></td>
+        <td>
+          <strong>${eq.name}</strong>
+          ${subtitle ? `<div class="text-muted" style="font-size:11px">${subtitle}</div>` : ''}
+        </td>
         <td>${eq.type || '—'}</td>
+        <td class="nowrap">${eq.yearBuilt || '—'}</td>
         <td>${badge(s)}</td>
         <td>${where}</td>
         <td class="nowrap">${due}</td>
@@ -367,7 +372,7 @@ function renderEquipment() {
           <button class="btn small" data-act="rent-eq" data-id="${eq.id}">Rent</button>
         </td>
       </tr>`;
-  }).join('') : `<tr><td colspan="8" class="text-muted" style="text-align:center;padding:24px">No equipment yet. Click "+ Add Equipment" to start.</td></tr>`;
+  }).join('') : `<tr><td colspan="9" class="text-muted" style="text-align:center;padding:24px">No equipment yet. Click "+ Add Equipment" to start.</td></tr>`;
 }
 
 // ---------- Render: rentals ----------
@@ -401,6 +406,7 @@ function renderRentals() {
       <tr>
         <td>${eqName(r.equipmentId)}</td>
         <td>${r.customer}</td>
+        <td>${r.salesman || '—'}</td>
         <td>${r.location || '—'}</td>
         <td class="nowrap">${fmtDt(r.timeOut)}</td>
         <td class="nowrap">${fmtDt(r.timeIn)}${r.actualReturn ? `<br/><span class="text-muted">in: ${fmtDt(r.actualReturn)}</span>` : ''}</td>
@@ -411,7 +417,7 @@ function renderRentals() {
           ${returnBtn}
         </td>
       </tr>`;
-  }).join('') : `<tr><td colspan="8" class="text-muted" style="text-align:center;padding:24px">No rentals yet. Click "+ New Rental" to schedule one.</td></tr>`;
+  }).join('') : `<tr><td colspan="9" class="text-muted" style="text-align:center;padding:24px">No rentals yet. Click "+ New Rental" to schedule one.</td></tr>`;
 }
 
 // ---------- Render: customers ----------
@@ -560,6 +566,7 @@ function customerHistory(c) {
         <td class="nowrap">${r.actualReturn ? fmtDt(r.actualReturn) : fmtDt(r.timeIn) + ' (due)'}</td>
         <td>${fmtDuration(dur)}</td>
         <td>${badge(s)}</td>
+        <td>${r.salesman || '—'}</td>
         <td>${r.location || '—'}</td>
         <td><button class="btn small" data-act="edit-rental" data-id="${r.id}">Open</button></td>
       </tr>`;
@@ -576,7 +583,7 @@ function customerHistory(c) {
     ${rows ? `
       <table class="data">
         <thead><tr>
-          <th>Equipment</th><th>Out</th><th>In / Due</th><th>Duration</th><th>Status</th><th>Location</th><th></th>
+          <th>Equipment</th><th>Out</th><th>In / Due</th><th>Duration</th><th>Status</th><th>Salesman</th><th>Location</th><th></th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -878,7 +885,7 @@ function render() {
 
 function equipmentForm(eq) {
   const isEdit = !!eq;
-  eq = eq || { id: '', unitId: '', name: '', type: '', notes: '', maintenance: false, maintenanceNotes: '', maintenanceDue: '' };
+  eq = eq || { id: '', unitId: '', name: '', type: '', notes: '', maintenance: false, maintenanceNotes: '', maintenanceDue: '', yearBuilt: '', make: '', model: '', serial: '' };
   const dueValue = eq.maintenanceDue ? eq.maintenanceDue.slice(0, 10) : '';
   return `
     <form id="eq-form">
@@ -902,7 +909,30 @@ function equipmentForm(eq) {
           <input type="date" name="maintenanceDue" value="${dueValue}" />
         </div>
       </div>
-      <div class="form-row">
+
+      <h3 style="margin:18px 0 8px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;border-top:1px solid var(--border);padding-top:14px;">Build Info</h3>
+      <div class="form-row two-up">
+        <div>
+          <label>Year Built</label>
+          <input type="number" name="yearBuilt" min="1900" max="2100" value="${eq.yearBuilt || ''}" placeholder="e.g. 2019" />
+        </div>
+        <div>
+          <label>Make</label>
+          <input name="make" value="${eq.make || ''}" placeholder="e.g. Bobcat" />
+        </div>
+      </div>
+      <div class="form-row two-up">
+        <div>
+          <label>Model</label>
+          <input name="model" value="${eq.model || ''}" placeholder="e.g. S650" />
+        </div>
+        <div>
+          <label>Serial Number</label>
+          <input name="serial" value="${eq.serial || ''}" />
+        </div>
+      </div>
+
+      <div class="form-row" style="margin-top:14px;border-top:1px solid var(--border);padding-top:14px;">
         <label><input type="checkbox" name="maintenance" ${eq.maintenance ? 'checked' : ''}/> Currently down for maintenance</label>
       </div>
       <div class="form-row">
@@ -962,6 +992,7 @@ function rentalForm(r) {
   const isEdit = !!r;
   r = r || {
     id: '', equipmentId: '', customer: '', customerPhone: '', location: '',
+    salesman: '',
     timeOut: '', timeIn: '', notes: '',
     checklistOut: DEFAULT_CHECKLIST_OUT.map(text => ({ text, checked: false })),
     checklistIn: DEFAULT_CHECKLIST_IN.map(text => ({ text, checked: false })),
@@ -971,6 +1002,7 @@ function rentalForm(r) {
     `<option value="${eq.id}" ${eq.id === r.equipmentId ? 'selected' : ''}>${eq.name} (${eq.unitId || eq.id})</option>`
   ).join('');
   const status = isEdit ? rentalStatus(r) : 'scheduled';
+  const salesmen = [...new Set(db.rentals.map(x => x.salesman).filter(Boolean))].sort();
 
   return `
     <form id="rent-form">
@@ -996,6 +1028,13 @@ function rentalForm(r) {
       <div class="form-row">
         <label>Job site / Location *</label>
         <input name="location" required value="${r.location || ''}" placeholder="123 Main St, Columbus OH" />
+      </div>
+      <div class="form-row">
+        <label>Salesman</label>
+        <input name="salesman" value="${r.salesman || ''}" list="salesman-list" autocomplete="off" placeholder="Who's handling this rental" />
+        <datalist id="salesman-list">
+          ${salesmen.map(s => `<option value="${s.replace(/"/g,'&quot;')}"></option>`).join('')}
+        </datalist>
       </div>
       <div class="form-row two-up">
         <div>
@@ -1161,6 +1200,7 @@ function bindRentalForm(existing) {
       equipmentId: data.equipmentId,
       customer: data.customer.trim(),
       customerPhone: data.customerPhone || '',
+      salesman: (data.salesman || '').trim(),
       location: data.location.trim(),
       timeOut: t1.toISOString(),
       timeIn: t2.toISOString(),
