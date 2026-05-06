@@ -336,73 +336,80 @@ function renderRentals() {
   }).join('') : `<tr><td colspan="8" class="text-muted" style="text-align:center;padding:24px">No rentals yet. Click "+ New Rental" to schedule one.</td></tr>`;
 }
 
-// ---------- Render: schedule ----------
+// ---------- Render: schedule (calendar) ----------
+
+let calendarMonth = (() => {
+  const d = new Date();
+  d.setDate(1); d.setHours(0, 0, 0, 0);
+  return d;
+})();
+
+function startOfDay(d) {
+  const x = new Date(d); x.setHours(0, 0, 0, 0); return x;
+}
 
 function renderSchedule() {
   const sel = document.getElementById('sched-equipment');
   const currentValue = sel.value;
-  sel.innerHTML = '<option value="">All</option>' + db.equipment.map(eq =>
+  sel.innerHTML = '<option value="">All equipment</option>' + db.equipment.map(eq =>
     `<option value="${eq.id}">${eq.name}</option>`
   ).join('');
   sel.value = currentValue;
 
-  const fromInput = document.getElementById('sched-from');
-  const toInput = document.getElementById('sched-to');
-  if (!fromInput.value) {
-    const now = new Date();
-    fromInput.value = now.toISOString().slice(0, 10);
-    const end = new Date(now.getTime() + 14 * 864e5);
-    toInput.value = end.toISOString().slice(0, 10);
-  }
+  const month = calendarMonth.getMonth();
+  const year = calendarMonth.getFullYear();
+  document.getElementById('cal-month-label').textContent =
+    calendarMonth.toLocaleString([], { month: 'long', year: 'numeric' });
 
-  const from = new Date(fromInput.value + 'T00:00:00');
-  const to = new Date(toInput.value + 'T23:59:59');
-  const totalMs = to - from;
-  const board = document.getElementById('schedule-board');
+  const first = new Date(year, month, 1);
+  const startOffset = first.getDay(); // 0=Sun
+  const gridStart = new Date(year, month, 1 - startOffset);
 
-  if (totalMs <= 0) {
-    board.innerHTML = '<div class="empty">Choose a "to" date after the "from" date.</div>';
-    return;
-  }
+  const eqFilter = sel.value;
+  const today = startOfDay(new Date()).getTime();
 
-  const eqList = sel.value
-    ? db.equipment.filter(e => e.id === sel.value)
-    : db.equipment;
+  let html = '';
+  for (let i = 0; i < 42; i++) {
+    const day = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i);
+    const dayStart = startOfDay(day);
+    const dayEnd = new Date(dayStart.getTime() + 864e5 - 1);
+    const inMonth = day.getMonth() === month;
+    const isToday = dayStart.getTime() === today;
+    const isWeekend = day.getDay() === 0 || day.getDay() === 6;
 
-  if (!eqList.length) {
-    board.innerHTML = '<div class="empty">No equipment to display.</div>';
-    return;
-  }
-
-  const days = Math.max(1, Math.round(totalMs / 864e5));
-  const axisLabels = [];
-  for (let i = 0; i <= days; i += Math.max(1, Math.floor(days / 7))) {
-    const d = new Date(from.getTime() + i * 864e5);
-    axisLabels.push(d.toLocaleDateString([], { month: 'short', day: 'numeric' }));
-  }
-
-  let html = `<div class="axis"><span>${axisLabels[0] || ''}</span><span>${axisLabels[axisLabels.length - 1] || ''}</span></div>`;
-
-  for (const eq of eqList) {
-    const rentals = db.rentals.filter(r => r.equipmentId === eq.id && !r.actualReturn);
-    const blocks = rentals.map(r => {
+    const rentals = db.rentals.filter(r => {
+      if (eqFilter && r.equipmentId !== eqFilter) return false;
       const out = new Date(r.timeOut);
       const due = new Date(r.timeIn);
-      if (due < from || out > to) return '';
-      const startMs = Math.max(out - from, 0);
-      const endMs = Math.min(due - from, totalMs);
-      const left = (startMs / totalMs) * 100;
-      const width = Math.max(((endMs - startMs) / totalMs) * 100, 1);
+      return out <= dayEnd && due >= dayStart;
+    }).sort((a, b) => new Date(a.timeOut) - new Date(b.timeOut));
+
+    const cls = ['cal-cell'];
+    if (!inMonth) cls.push('other-month');
+    if (isToday) cls.push('today');
+    if (isWeekend && inMonth && !isToday) cls.push('weekend');
+
+    const max = 4;
+    const shown = rentals.slice(0, max).map(r => {
       const s = rentalStatus(r);
-      return `<div class="block ${s}" style="left:${left}%;width:${width}%" title="${r.customer} @ ${r.location || ''} ${fmtDt(r.timeOut)} → ${fmtDt(r.timeIn)}">${r.customer}</div>`;
+      const eq = db.equipment.find(e => e.id === r.equipmentId);
+      const label = `${eq ? eq.name : '?'} · ${r.customer}`;
+      const tooltip = `${eq ? eq.name : '?'} — ${r.customer}\n${r.location || ''}\nOut: ${fmtDt(r.timeOut)}\nDue: ${fmtDt(r.timeIn)}`;
+      return `<div class="cal-event ${s}" data-act="edit-rental" data-id="${r.id}" title="${tooltip.replace(/"/g, '&quot;')}">${label}</div>`;
     }).join('');
-    const downBlock = eq.maintenance ? `<div class="block overdue" style="left:0;width:100%" title="Down for maintenance">Down for maintenance</div>` : '';
-    html += `<div class="row">
-      <div class="name">${eq.name}<div class="meta text-muted" style="font-size:11px">${eq.type || ''}</div></div>
-      <div class="timeline">${downBlock || blocks || ''}</div>
+    const more = rentals.length > max ? `<div class="cal-more">+${rentals.length - max} more</div>` : '';
+
+    html += `<div class="${cls.join(' ')}">
+      <div class="cal-date">${day.getDate()}</div>
+      <div class="cal-events">${shown}${more}</div>
     </div>`;
   }
-  board.innerHTML = html;
+  document.getElementById('schedule-board').innerHTML = html;
+}
+
+function shiftCalendar(delta) {
+  calendarMonth = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + delta, 1);
+  renderSchedule();
 }
 
 // ---------- Render: maintenance ----------
@@ -489,11 +496,11 @@ function pinIcon(color) {
 
 function statusColor(status) {
   return ({
-    scheduled: '#0ea5e9',
+    scheduled: '#eab308',
     active: '#2563eb',
     overdue: '#dc2626',
     returned: '#94a3b8',
-    maintenance: '#d97706',
+    maintenance: '#dc2626',
   })[status] || '#94a3b8';
 }
 
@@ -1029,7 +1036,13 @@ document.body.addEventListener('click', e => {
 
 ['eq-search','eq-filter-status'].forEach(id => document.getElementById(id).addEventListener('input', render));
 ['rent-search','rent-filter-status'].forEach(id => document.getElementById(id).addEventListener('input', render));
-['sched-equipment','sched-from','sched-to'].forEach(id => document.getElementById(id).addEventListener('change', render));
+document.getElementById('sched-equipment').addEventListener('change', renderSchedule);
+document.getElementById('cal-prev').addEventListener('click', () => shiftCalendar(-1));
+document.getElementById('cal-next').addEventListener('click', () => shiftCalendar(1));
+document.getElementById('cal-today').addEventListener('click', () => {
+  calendarMonth = (() => { const d = new Date(); d.setDate(1); d.setHours(0,0,0,0); return d; })();
+  renderSchedule();
+});
 
 document.getElementById('map-filter').addEventListener('change', renderMap);
 document.getElementById('map-recenter').addEventListener('click', () => {
