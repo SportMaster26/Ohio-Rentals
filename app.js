@@ -135,7 +135,11 @@ function customerStats(c) {
   const last = rentals[0] || null;
   let lastDurationMs = 0;
   if (last) {
-    const end = last.actualReturn ? new Date(last.actualReturn) : new Date(last.timeIn);
+    const end = last.actualReturn
+      ? new Date(last.actualReturn)
+      : last.timeIn
+        ? new Date(last.timeIn)
+        : new Date();
     lastDurationMs = Math.max(0, end - new Date(last.timeOut));
   }
   return {
@@ -170,8 +174,9 @@ function rentalStatus(r) {
   if (r.actualReturn) return 'returned';
   const now = new Date();
   const out = new Date(r.timeOut);
-  const due = new Date(r.timeIn);
   if (now < out) return 'scheduled';
+  if (!r.timeIn) return 'active';
+  const due = new Date(r.timeIn);
   if (now > due) return 'overdue';
   return 'active';
 }
@@ -208,14 +213,15 @@ function checklistIncomplete(r) {
 // ---------- Conflict check ----------
 
 function findConflicts(equipmentId, timeOut, timeIn, ignoreRentalId) {
+  const FAR_FUTURE = new Date(8640000000000000);
   const out = new Date(timeOut);
-  const dueIn = new Date(timeIn);
+  const dueIn = timeIn ? new Date(timeIn) : FAR_FUTURE;
   return db.rentals.filter(r => {
     if (r.id === ignoreRentalId) return false;
     if (r.equipmentId !== equipmentId) return false;
     if (r.actualReturn) return false;
     const ro = new Date(r.timeOut);
-    const ri = new Date(r.timeIn);
+    const ri = r.timeIn ? new Date(r.timeIn) : FAR_FUTURE;
     return ro < dueIn && out < ri;
   });
 }
@@ -333,7 +339,7 @@ function renderDashboard() {
         </div>
         <div class="meta">
           ${badge(rentalStatus(r))}<br/>
-          due ${fmtDt(r.timeIn)}
+          ${r.timeIn ? `due ${fmtDt(r.timeIn)}` : 'open'}
         </div>
       </div>
     `).join('')
@@ -472,7 +478,7 @@ function renderRentals() {
         <td>${r.salesman || '—'}</td>
         <td>${r.location || '—'}</td>
         <td class="nowrap">${fmtDt(r.timeOut)}</td>
-        <td class="nowrap">${fmtDt(r.timeIn)}${r.actualReturn ? `<br/><span class="text-muted">in: ${fmtDt(r.actualReturn)}</span>` : ''}</td>
+        <td class="nowrap">${r.timeIn ? fmtDt(r.timeIn) : '<span class="text-muted">open</span>'}${r.actualReturn ? `<br/><span class="text-muted">in: ${fmtDt(r.actualReturn)}</span>` : ''}</td>
         <td>${badge(s)}</td>
         <td>${checkBadge}</td>
         <td class="row-actions">
@@ -620,7 +626,11 @@ function customerHistory(c) {
   const stats = customerStats(c);
   const rows = stats.rentals.map(r => {
     const s = rentalStatus(r);
-    const end = r.actualReturn ? new Date(r.actualReturn) : new Date(r.timeIn);
+    const end = r.actualReturn
+      ? new Date(r.actualReturn)
+      : r.timeIn
+        ? new Date(r.timeIn)
+        : new Date();
     const dur = Math.max(0, end - new Date(r.timeOut));
     return `
       <tr>
@@ -702,8 +712,14 @@ function renderSchedule() {
     const rentals = db.rentals.filter(r => {
       if (eqFilter && r.equipmentId !== eqFilter) return false;
       const out = new Date(r.timeOut);
-      const due = new Date(r.timeIn);
-      return out <= dayEnd && due >= dayStart;
+      // For open-ended (no timeIn) rentals, end at actualReturn or today
+      // so they show on the days they were/are out, not forever forward.
+      const end = r.actualReturn
+        ? new Date(r.actualReturn)
+        : r.timeIn
+          ? new Date(r.timeIn)
+          : (out > new Date() ? out : new Date());
+      return out <= dayEnd && end >= dayStart;
     }).sort((a, b) => new Date(a.timeOut) - new Date(b.timeOut));
 
     const cls = ['cal-cell'];
@@ -1093,8 +1109,8 @@ function rentalForm(r) {
           <input type="datetime-local" name="timeOut" required value="${toLocalInput(r.timeOut)}" />
         </div>
         <div>
-          <label>Scheduled Time In *</label>
-          <input type="datetime-local" name="timeIn" required value="${toLocalInput(r.timeIn)}" />
+          <label>Scheduled Time In <span class="text-muted">(optional)</span></label>
+          <input type="datetime-local" name="timeIn" value="${toLocalInput(r.timeIn)}" />
         </div>
       </div>
       ${isEdit ? `
@@ -1230,10 +1246,10 @@ function bindRentalForm(existing) {
     const data = Object.fromEntries(fd.entries());
     if (!data.equipmentId) return toast('Pick an equipment.', 'error');
     const t1 = new Date(data.timeOut);
-    const t2 = new Date(data.timeIn);
-    if (!(t2 > t1)) return toast('"Time In" must be after "Time Out".', 'error');
+    const t2 = data.timeIn ? new Date(data.timeIn) : null;
+    if (t2 && !(t2 > t1)) return toast('"Time In" must be after "Time Out".', 'error');
 
-    const conflicts = findConflicts(data.equipmentId, t1.toISOString(), t2.toISOString(), existing?.id);
+    const conflicts = findConflicts(data.equipmentId, t1.toISOString(), t2 ? t2.toISOString() : '', existing?.id);
     if (conflicts.length) {
       const ok = confirm(`This piece is already booked during that window:\n` +
         conflicts.map(c => `• ${c.customer} ${fmtDt(c.timeOut)} → ${fmtDt(c.timeIn)}`).join('\n') +
@@ -1254,7 +1270,7 @@ function bindRentalForm(existing) {
       salesman: (data.salesman || '').trim(),
       location: data.location.trim(),
       timeOut: t1.toISOString(),
-      timeIn: t2.toISOString(),
+      timeIn: t2 ? t2.toISOString() : '',
       notes: data.notes || '',
       checklistOut: out,
       checklistIn: inn,
