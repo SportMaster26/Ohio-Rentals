@@ -814,6 +814,19 @@ function ensureMap() {
     attribution: '&copy; OpenStreetMap contributors',
     maxZoom: 19,
   }).addTo(mapInstance);
+  const legend = L.control({ position: 'bottomright' });
+  legend.onAdd = () => {
+    const div = L.DomUtil.create('div', 'map-legend');
+    div.innerHTML = `
+      <div><span style="background:${GROUP_COLORS[0]}"></span>TR</div>
+      <div><span style="background:${GROUP_COLORS[1]}"></span>Mastic</div>
+      <div><span style="background:${GROUP_COLORS[2]}"></span>CP</div>
+      <div><span style="background:${GROUP_COLORS[3]}"></span>SP</div>
+      <div><span style="background:${GROUP_COLORS[4]}"></span>Misc</div>
+    `;
+    return div;
+  };
+  legend.addTo(mapInstance);
   return mapInstance;
 }
 
@@ -840,6 +853,19 @@ function statusColor(status) {
     returned: '#94a3b8',
     maintenance: '#dc2626',
   })[status] || '#94a3b8';
+}
+
+const GROUP_COLORS = {
+  0: '#eab308', // TRs    - yellow
+  1: '#dc2626', // Mastic - red
+  2: '#2563eb', // CP     - blue
+  3: '#16a34a', // SP     - green
+  4: '#94a3b8', // Misc   - gray
+};
+
+function groupColor(eq) {
+  if (!eq) return GROUP_COLORS[4];
+  return GROUP_COLORS[typeGroupIndex(eq)];
 }
 
 function setMapStatus(text) {
@@ -924,7 +950,8 @@ function renderMap() {
     }
     if (r.geocode.failed) continue;
     const s = rentalStatus(r);
-    const marker = L.marker([r.geocode.lat, r.geocode.lng], { icon: pinIcon(statusColor(s)) }).addTo(map);
+    const eq = db.equipment.find(e => e.id === r.equipmentId);
+    const marker = L.marker([r.geocode.lat, r.geocode.lng], { icon: pinIcon(groupColor(eq)) }).addTo(map);
     const popupHtml = `
       <div style="font-family:inherit;min-width:200px">
         <div style="font-weight:600;margin-bottom:4px">${eqName(r.equipmentId)}</div>

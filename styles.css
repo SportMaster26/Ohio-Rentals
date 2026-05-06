@@ -184,6 +184,26 @@ table.data tbody tr.group-row:hover td { background: #eef2f7; }
 .cal-event.returned  { background: #f1f5f9; color: #475569; border-color: #e2e8f0; }
 .cal-more { font-size: 11px; color: var(--muted); padding: 0 6px; }
 
+/* Map legend */
+.map-legend {
+  background: white;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.15);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text);
+}
+.map-legend div { display: flex; align-items: center; gap: 8px; }
+.map-legend span {
+  display: inline-block;
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid white;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.25);
+  flex-shrink: 0;
+}
+
 /* Modal */
 .modal-backdrop {
   position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45);
