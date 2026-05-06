@@ -49,15 +49,13 @@ function nowIso() { return new Date().toISOString(); }
 
 // ---------- Equipment grouping & order ----------
 
-const TYPE_GROUP_NAMES = ['TRs', 'Mastics', 'Crack Pros', 'SPs', 'Misc'];
+const TYPE_GROUP_NAMES = ['TRs', 'Mastics', 'CP', 'SPs', 'Misc'];
 
 function typeGroupIndex(eq) {
   const id = (eq.unitId || '').toUpperCase().trim();
   const type = (eq.type || '').toLowerCase();
   const name = (eq.name || '').toLowerCase();
-  const make = (eq.make || '').toLowerCase();
-  const model = (eq.model || '').toLowerCase();
-  const blob = `${type} ${name} ${make} ${model}`;
+  const blob = `${type} ${name}`;
 
   // Match unit ID prefix first (most reliable).
   if (/^TR[\s\-]?\d*/.test(id)) return 0;
@@ -68,7 +66,7 @@ function typeGroupIndex(eq) {
   // Fall back to type / name keywords.
   if (/\btrailer\b|\btr\b/.test(blob)) return 0;
   if (/mastic/.test(blob)) return 1;
-  if (/crack[\s-]?pro/.test(blob)) return 2;
+  if (/crack[\s-]?pro|\bcp\b/.test(blob)) return 2;
   if (/\bsp\b|sealcoat|sealer|sprayer|stealth/.test(blob)) return 3;
 
   return 4;
