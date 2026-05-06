@@ -144,6 +144,9 @@ function showView(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === name));
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
   render();
+  if (name === 'map' && mapInstance) {
+    setTimeout(() => mapInstance.invalidateSize(), 50);
+  }
 }
 
 // ---------- Modal ----------
@@ -447,6 +450,158 @@ function renderMaintenance() {
   }).join('') : `<tr><td colspan="4" class="text-muted" style="text-align:center;padding:18px">No service history yet.</td></tr>`;
 }
 
+// ---------- Map ----------
+
+const OHIO_CENTER = [40.4173, -82.9071];
+const OHIO_ZOOM = 7;
+let mapInstance = null;
+let mapMarkers = [];
+let geocodeQueue = [];
+let geocodeRunning = false;
+
+function ensureMap() {
+  if (mapInstance) return mapInstance;
+  if (!window.L) return null;
+  const el = document.getElementById('map');
+  if (!el) return null;
+  mapInstance = L.map(el, { zoomControl: true }).setView(OHIO_CENTER, OHIO_ZOOM);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors',
+    maxZoom: 19,
+  }).addTo(mapInstance);
+  return mapInstance;
+}
+
+function clearMarkers() {
+  mapMarkers.forEach(m => m.remove());
+  mapMarkers = [];
+}
+
+function pinIcon(color) {
+  // Simple colored circle marker via L.divIcon
+  return L.divIcon({
+    className: 'rental-pin',
+    html: `<div style="background:${color};width:18px;height:18px;border-radius:50%;border:3px solid white;box-shadow:0 0 0 1px rgba(0,0,0,0.4);"></div>`,
+    iconSize: [18, 18],
+    iconAnchor: [9, 9],
+  });
+}
+
+function statusColor(status) {
+  return ({
+    scheduled: '#0ea5e9',
+    active: '#2563eb',
+    overdue: '#dc2626',
+    returned: '#94a3b8',
+    maintenance: '#d97706',
+  })[status] || '#94a3b8';
+}
+
+function setMapStatus(text) {
+  const el = document.getElementById('map-status');
+  if (el) el.textContent = text || '';
+}
+
+async function geocodeAddress(address) {
+  const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&q=' +
+    encodeURIComponent(address);
+  const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+  if (!res.ok) throw new Error('Geocoder error ' + res.status);
+  const data = await res.json();
+  if (!data.length) return null;
+  return {
+    lat: parseFloat(data[0].lat),
+    lng: parseFloat(data[0].lon),
+    display: data[0].display_name,
+    geocodedAt: nowIso(),
+  };
+}
+
+function queueGeocode(rental) {
+  if (!rental.location) return;
+  if (rental.geocode && rental.geocode.queryFor === rental.location) return;
+  if (geocodeQueue.includes(rental.id)) return;
+  geocodeQueue.push(rental.id);
+  runGeocodeQueue();
+}
+
+async function runGeocodeQueue() {
+  if (geocodeRunning) return;
+  geocodeRunning = true;
+  while (geocodeQueue.length) {
+    const id = geocodeQueue.shift();
+    const r = db.rentals.find(x => x.id === id);
+    if (!r || !r.location) continue;
+    setMapStatus(`Looking up ${r.location}...`);
+    try {
+      const g = await geocodeAddress(r.location);
+      if (g) {
+        r.geocode = { ...g, queryFor: r.location };
+      } else {
+        r.geocode = { failed: true, queryFor: r.location, geocodedAt: nowIso() };
+      }
+      saveDb();
+      if (document.querySelector('.tab.active').dataset.view === 'map') renderMap();
+    } catch (err) {
+      console.warn('Geocode failed', err);
+    }
+    // Nominatim policy: max 1 request per second
+    await new Promise(r => setTimeout(r, 1100));
+  }
+  setMapStatus('');
+  geocodeRunning = false;
+}
+
+function rentalsForMapFilter() {
+  const filter = document.getElementById('map-filter')?.value || 'active';
+  return db.rentals.filter(r => {
+    if (r.actualReturn) return false;
+    const s = rentalStatus(r);
+    if (filter === 'active') return s === 'active' || s === 'overdue';
+    if (filter === 'upcoming') return s === 'active' || s === 'overdue' || s === 'scheduled';
+    return true;
+  });
+}
+
+function renderMap() {
+  const map = ensureMap();
+  if (!map) return;
+  clearMarkers();
+  const rentals = rentalsForMapFilter();
+  const bounds = [];
+  let pending = 0;
+  for (const r of rentals) {
+    if (!r.location) continue;
+    if (!r.geocode || r.geocode.queryFor !== r.location) {
+      queueGeocode(r);
+      pending++;
+      continue;
+    }
+    if (r.geocode.failed) continue;
+    const s = rentalStatus(r);
+    const marker = L.marker([r.geocode.lat, r.geocode.lng], { icon: pinIcon(statusColor(s)) }).addTo(map);
+    const popupHtml = `
+      <div style="font-family:inherit;min-width:200px">
+        <div style="font-weight:600;margin-bottom:4px">${eqName(r.equipmentId)}</div>
+        <div><strong>${r.customer}</strong>${r.customerPhone ? ' · ' + r.customerPhone : ''}</div>
+        <div style="color:#555;margin:4px 0">${r.location}</div>
+        <div style="font-size:12px">Out: ${fmtDt(r.timeOut)}<br/>Due: ${fmtDt(r.timeIn)}</div>
+        <div style="margin-top:6px">${badge(s)}</div>
+      </div>`;
+    marker.bindPopup(popupHtml);
+    mapMarkers.push(marker);
+    bounds.push([r.geocode.lat, r.geocode.lng]);
+  }
+  if (bounds.length) {
+    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 });
+  } else {
+    map.setView(OHIO_CENTER, OHIO_ZOOM);
+  }
+  if (pending) {
+    setMapStatus(`Geocoding ${pending} location${pending > 1 ? 's' : ''}...`);
+  }
+}
+
 // ---------- Render router ----------
 
 function render() {
@@ -455,6 +610,7 @@ function render() {
   if (view === 'equipment') renderEquipment();
   if (view === 'rentals') renderRentals();
   if (view === 'schedule') renderSchedule();
+  if (view === 'map') renderMap();
   if (view === 'maintenance') renderMaintenance();
 }
 
@@ -742,12 +898,18 @@ function bindRentalForm(existing) {
       checklistIn: inn,
     };
 
+    let saved;
     if (existing) {
+      // If location changed, drop the old geocode so it re-runs.
+      if (existing.location !== payload.location) existing.geocode = null;
       Object.assign(existing, payload);
+      saved = existing;
     } else {
-      db.rentals.push({ id: uid('r'), actualReturn: '', ...payload });
+      saved = { id: uid('r'), actualReturn: '', ...payload };
+      db.rentals.push(saved);
     }
     saveDb(); closeModal(); render();
+    queueGeocode(saved);
     toast(existing ? 'Rental updated.' : 'Rental created.');
   });
 }
@@ -869,6 +1031,24 @@ document.body.addEventListener('click', e => {
 ['rent-search','rent-filter-status'].forEach(id => document.getElementById(id).addEventListener('input', render));
 ['sched-equipment','sched-from','sched-to'].forEach(id => document.getElementById(id).addEventListener('change', render));
 
+document.getElementById('map-filter').addEventListener('change', renderMap);
+document.getElementById('map-recenter').addEventListener('click', () => {
+  const m = ensureMap();
+  if (m) m.setView(OHIO_CENTER, OHIO_ZOOM);
+});
+document.getElementById('map-geocode').addEventListener('click', () => {
+  // Force re-geocode of all visible rentals
+  const list = rentalsForMapFilter();
+  for (const r of list) {
+    if (r.location) {
+      r.geocode = null;
+      queueGeocode(r);
+    }
+  }
+  saveDb();
+  renderMap();
+});
+
 // Export / Import
 document.getElementById('export-btn').addEventListener('click', () => {
   const blob = new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' });
@@ -912,3 +1092,10 @@ if (!db.equipment.length && !db.rentals.length) {
 
 // Initial render
 render();
+
+// Backlog geocode any rentals that have a location but no coords yet
+for (const r of db.rentals) {
+  if (r.location && !r.actualReturn && (!r.geocode || r.geocode.queryFor !== r.location)) {
+    queueGeocode(r);
+  }
+}

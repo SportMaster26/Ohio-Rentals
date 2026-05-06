@@ -4,7 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Ohio Rentals — Fleet Tracker</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <link rel="stylesheet" href="styles.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 </head>
 <body>
   <header class="topbar">
@@ -17,6 +21,7 @@
       <button class="tab" data-view="equipment">Equipment</button>
       <button class="tab" data-view="rentals">Rentals</button>
       <button class="tab" data-view="schedule">Schedule</button>
+      <button class="tab" data-view="map">Map</button>
       <button class="tab" data-view="maintenance">Maintenance</button>
     </nav>
     <div class="header-actions">
@@ -123,6 +128,25 @@
       </div>
       <div class="card">
         <div id="schedule-board" class="schedule"></div>
+      </div>
+    </section>
+
+    <!-- MAP -->
+    <section class="view" id="view-map">
+      <div class="toolbar">
+        <label>Show:
+          <select id="map-filter">
+            <option value="active">Out + Overdue</option>
+            <option value="upcoming">Out + Scheduled</option>
+            <option value="all">All open rentals</option>
+          </select>
+        </label>
+        <button class="btn ghost" id="map-recenter">Recenter on Ohio</button>
+        <button class="btn ghost" id="map-geocode">Refresh pins</button>
+        <span class="text-muted" id="map-status"></span>
+      </div>
+      <div class="card" style="padding: 0; overflow: hidden;">
+        <div id="map" style="height: 600px; width: 100%;"></div>
       </div>
     </section>
 
