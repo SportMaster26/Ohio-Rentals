@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Ohio Rentals — Fleet Tracker</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Ohio Rentals</h1>
+      <span class="tag">Fleet &amp; Rental Tracker</span>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-view="dashboard">Dashboard</button>
+      <button class="tab" data-view="equipment">Equipment</button>
+      <button class="tab" data-view="rentals">Rentals</button>
+      <button class="tab" data-view="schedule">Schedule</button>
+      <button class="tab" data-view="maintenance">Maintenance</button>
+    </nav>
+    <div class="header-actions">
+      <button id="export-btn" class="btn ghost" title="Download a JSON backup">Export</button>
+      <button id="import-btn" class="btn ghost" title="Restore from a JSON backup">Import</button>
+      <input type="file" id="import-file" accept="application/json" hidden />
+    </div>
+  </header>
+
+  <main id="app">
+    <!-- DASHBOARD -->
+    <section class="view active" id="view-dashboard">
+      <div class="grid stats">
+        <div class="card stat"><span class="label">Available</span><span class="value" id="stat-available">0</span></div>
+        <div class="card stat"><span class="label">Out Now</span><span class="value" id="stat-out">0</span></div>
+        <div class="card stat"><span class="label">Scheduled</span><span class="value" id="stat-scheduled">0</span></div>
+        <div class="card stat warn"><span class="label">Overdue</span><span class="value" id="stat-overdue">0</span></div>
+        <div class="card stat alert"><span class="label">Needs Maintenance</span><span class="value" id="stat-maint">0</span></div>
+        <div class="card stat alert"><span class="label">Checklists Due</span><span class="value" id="stat-checklist">0</span></div>
+      </div>
+
+      <div class="grid two-col">
+        <div class="card">
+          <h2>Out Right Now</h2>
+          <div id="dash-active" class="list"></div>
+        </div>
+        <div class="card">
+          <h2>Coming Up</h2>
+          <div id="dash-upcoming" class="list"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Attention Needed</h2>
+        <div id="dash-attention" class="list"></div>
+      </div>
+    </section>
+
+    <!-- EQUIPMENT -->
+    <section class="view" id="view-equipment">
+      <div class="toolbar">
+        <input type="search" id="eq-search" placeholder="Search by name, type, or ID..." />
+        <select id="eq-filter-status">
+          <option value="">All statuses</option>
+          <option value="available">Available</option>
+          <option value="rented">Out</option>
+          <option value="scheduled">Scheduled</option>
+          <option value="maintenance">Maintenance</option>
+        </select>
+        <button class="btn primary" id="eq-add-btn">+ Add Equipment</button>
+      </div>
+      <div class="card">
+        <table class="data">
+          <thead>
+            <tr>
+              <th>ID</th><th>Name</th><th>Type</th><th>Status</th>
+              <th>Location / Customer</th><th>Due Back</th><th>Maintenance</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="eq-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- RENTALS -->
+    <section class="view" id="view-rentals">
+      <div class="toolbar">
+        <input type="search" id="rent-search" placeholder="Search by customer, location, or equipment..." />
+        <select id="rent-filter-status">
+          <option value="">All</option>
+          <option value="scheduled">Scheduled</option>
+          <option value="active">Out (active)</option>
+          <option value="returned">Returned</option>
+          <option value="overdue">Overdue</option>
+        </select>
+        <button class="btn primary" id="rent-add-btn">+ New Rental</button>
+      </div>
+      <div class="card">
+        <table class="data">
+          <thead>
+            <tr>
+              <th>Equipment</th><th>Customer</th><th>Location</th>
+              <th>Time Out</th><th>Time In (Due)</th><th>Status</th>
+              <th>Checklists</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="rent-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SCHEDULE -->
+    <section class="view" id="view-schedule">
+      <div class="toolbar">
+        <label>Equipment:
+          <select id="sched-equipment"><option value="">All</option></select>
+        </label>
+        <label>From:
+          <input type="date" id="sched-from" />
+        </label>
+        <label>To:
+          <input type="date" id="sched-to" />
+        </label>
+      </div>
+      <div class="card">
+        <div id="schedule-board" class="schedule"></div>
+      </div>
+    </section>
+
+    <!-- MAINTENANCE -->
+    <section class="view" id="view-maintenance">
+      <div class="toolbar">
+        <button class="btn primary" id="maint-flag-btn">Flag Equipment for Maintenance</button>
+      </div>
+      <div class="grid two-col">
+        <div class="card">
+          <h2>Currently Down</h2>
+          <div id="maint-down" class="list"></div>
+        </div>
+        <div class="card">
+          <h2>Maintenance Coming Due</h2>
+          <div id="maint-due" class="list"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Service History</h2>
+        <table class="data">
+          <thead><tr><th>Date</th><th>Equipment</th><th>Notes</th><th>By</th></tr></thead>
+          <tbody id="maint-history"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- MODAL -->
+  <div class="modal-backdrop hidden" id="modal-backdrop">
+    <div class="modal" id="modal">
+      <header>
+        <h2 id="modal-title">Title</h2>
+        <button class="btn ghost" id="modal-close">Close</button>
+      </header>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
