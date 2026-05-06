@@ -111,6 +111,12 @@ table.data th, table.data td {
 }
 table.data th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; background: var(--panel-2); }
 table.data tbody tr:hover { background: var(--panel-2); }
+table.data tbody tr.group-row td {
+  background: #eef2f7; color: var(--muted); font-weight: 700;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+  padding: 6px 10px; border-bottom: 1px solid var(--border-strong);
+}
+table.data tbody tr.group-row:hover td { background: #eef2f7; }
 
 /* Status badges */
 .badge {

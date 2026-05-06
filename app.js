@@ -47,6 +47,51 @@ function uid(prefix) {
 
 function nowIso() { return new Date().toISOString(); }
 
+// ---------- Equipment grouping & order ----------
+
+const TYPE_GROUP_NAMES = ['TRs', 'Mastics', 'Crack Pros', 'SPs', 'Misc'];
+
+function typeGroupIndex(eq) {
+  const id = (eq.unitId || '').toUpperCase().trim();
+  const type = (eq.type || '').toLowerCase();
+  const name = (eq.name || '').toLowerCase();
+  const make = (eq.make || '').toLowerCase();
+  const model = (eq.model || '').toLowerCase();
+  const blob = `${type} ${name} ${make} ${model}`;
+
+  // Match unit ID prefix first (most reliable).
+  if (/^TR[\s\-]?\d*/.test(id)) return 0;
+  if (/^(MAS|MST|MS)[\s\-]?\d*/.test(id)) return 1;
+  if (/^(CP|CRACK)[\s\-]?\d*/.test(id)) return 2;
+  if (/^SP[\s\-]?\d*/.test(id)) return 3;
+
+  // Fall back to type / name keywords.
+  if (/\btrailer\b|\btr\b/.test(blob)) return 0;
+  if (/mastic/.test(blob)) return 1;
+  if (/crack[\s-]?pro/.test(blob)) return 2;
+  if (/\bsp\b|sealcoat|sealer|sprayer|stealth/.test(blob)) return 3;
+
+  return 4;
+}
+
+function unitNumber(eq) {
+  const m = (eq.unitId || eq.name || '').match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : Infinity;
+}
+
+function sortedEquipment(arr) {
+  arr = arr || db.equipment;
+  return [...arr].sort((a, b) => {
+    const ga = typeGroupIndex(a);
+    const gb = typeGroupIndex(b);
+    if (ga !== gb) return ga - gb;
+    const na = unitNumber(a);
+    const nb = unitNumber(b);
+    if (na !== nb) return na - nb;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+}
+
 // ---------- Customers ----------
 
 function normalizeName(s) {
@@ -190,6 +235,14 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
+function fmtMonthYear(s) {
+  if (!s) return '—';
+  const [y, m] = String(s).split('-');
+  if (!y || !m) return s;
+  const d = new Date(Number(y), Number(m) - 1, 1);
+  return d.toLocaleString([], { month: 'short', year: 'numeric' });
+}
+
 function eqName(id) {
   const eq = db.equipment.find(e => e.id === id);
   return eq ? `${eq.name} (${eq.unitId || eq.id})` : 'Unknown';
@@ -330,7 +383,7 @@ function renderEquipment() {
   const search = (document.getElementById('eq-search').value || '').toLowerCase();
   const statusFilter = document.getElementById('eq-filter-status').value;
   const tbody = document.getElementById('eq-tbody');
-  let rows = db.equipment;
+  let rows = sortedEquipment();
   if (search) {
     rows = rows.filter(eq =>
       (eq.name + ' ' + (eq.type||'') + ' ' + (eq.unitId||'') + ' ' + eq.id).toLowerCase().includes(search)
@@ -338,41 +391,53 @@ function renderEquipment() {
   }
   if (statusFilter) rows = rows.filter(eq => equipmentStatus(eq) === statusFilter);
 
-  tbody.innerHTML = rows.length ? rows.map(eq => {
-    const s = equipmentStatus(eq);
-    const a = activeRental(eq);
-    const next = !a ? nextScheduled(eq) : null;
-    const where = a
-      ? `${a.customer} @ ${a.location || '—'}`
-      : next
-        ? `(scheduled) ${next.customer} @ ${next.location || '—'}`
-        : '—';
-    const due = a ? fmtDt(a.timeIn) : (next ? fmtDt(next.timeOut) + ' out' : '—');
-    const maint = eq.maintenance
-      ? `<span class="text-bad">DOWN</span>`
-      : eq.maintenanceDue
-        ? `due ${fmtDate(eq.maintenanceDue)}`
-        : '—';
-    const subtitle = [eq.make, eq.model].filter(Boolean).join(' ');
-    return `
-      <tr>
-        <td class="nowrap">${eq.unitId || eq.id}</td>
-        <td>
-          <strong>${eq.name}</strong>
-          ${subtitle ? `<div class="text-muted" style="font-size:11px">${subtitle}</div>` : ''}
-        </td>
-        <td>${eq.type || '—'}</td>
-        <td class="nowrap">${eq.yearBuilt || '—'}</td>
-        <td>${badge(s)}</td>
-        <td>${where}</td>
-        <td class="nowrap">${due}</td>
-        <td class="nowrap">${maint}</td>
-        <td class="row-actions">
-          <button class="btn small" data-act="edit-eq" data-id="${eq.id}">Edit</button>
-          <button class="btn small" data-act="rent-eq" data-id="${eq.id}">Rent</button>
-        </td>
-      </tr>`;
-  }).join('') : `<tr><td colspan="9" class="text-muted" style="text-align:center;padding:24px">No equipment yet. Click "+ Add Equipment" to start.</td></tr>`;
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="10" class="text-muted" style="text-align:center;padding:24px">No equipment yet. Click "+ Add Equipment" to start.</td></tr>`;
+    return;
+  }
+
+  // Group already-sorted rows by typeGroupIndex.
+  const groups = TYPE_GROUP_NAMES.map(() => []);
+  for (const eq of rows) groups[typeGroupIndex(eq)].push(eq);
+
+  let html = '';
+  groups.forEach((group, i) => {
+    if (!group.length) return;
+    html += `<tr class="group-row"><td colspan="10">${TYPE_GROUP_NAMES[i]}</td></tr>`;
+    for (const eq of group) {
+      const s = equipmentStatus(eq);
+      const a = activeRental(eq);
+      const next = !a ? nextScheduled(eq) : null;
+      const where = a
+        ? `${a.customer} @ ${a.location || '—'}`
+        : next
+          ? `(scheduled) ${next.customer} @ ${next.location || '—'}`
+          : '—';
+      const due = a ? fmtDt(a.timeIn) : (next ? fmtDt(next.timeOut) + ' out' : '—');
+      const maint = eq.maintenance
+        ? `<span class="text-bad">DOWN</span>`
+        : eq.maintenanceDue
+          ? `due ${fmtDate(eq.maintenanceDue)}`
+          : '—';
+      html += `
+        <tr>
+          <td class="nowrap">${eq.unitId || eq.id}</td>
+          <td><strong>${eq.name}</strong></td>
+          <td>${eq.type || '—'}</td>
+          <td class="nowrap">${fmtMonthYear(eq.monthYearBuilt)}</td>
+          <td class="nowrap">${eq.hoursRan ? Number(eq.hoursRan).toLocaleString() : '—'}</td>
+          <td>${badge(s)}</td>
+          <td>${where}</td>
+          <td class="nowrap">${due}</td>
+          <td class="nowrap">${maint}</td>
+          <td class="row-actions">
+            <button class="btn small" data-act="edit-eq" data-id="${eq.id}">Edit</button>
+            <button class="btn small" data-act="rent-eq" data-id="${eq.id}">Rent</button>
+          </td>
+        </tr>`;
+    }
+  });
+  tbody.innerHTML = html;
 }
 
 // ---------- Render: rentals ----------
@@ -610,7 +675,7 @@ function startOfDay(d) {
 function renderSchedule() {
   const sel = document.getElementById('sched-equipment');
   const currentValue = sel.value;
-  sel.innerHTML = '<option value="">All equipment</option>' + db.equipment.map(eq =>
+  sel.innerHTML = '<option value="">All equipment</option>' + sortedEquipment().map(eq =>
     `<option value="${eq.id}">${eq.name}</option>`
   ).join('');
   sel.value = currentValue;
@@ -885,50 +950,38 @@ function render() {
 
 function equipmentForm(eq) {
   const isEdit = !!eq;
-  eq = eq || { id: '', unitId: '', name: '', type: '', notes: '', maintenance: false, maintenanceNotes: '', maintenanceDue: '', yearBuilt: '', make: '', model: '', serial: '' };
+  eq = eq || { id: '', unitId: '', name: '', type: '', notes: '', maintenance: false, maintenanceNotes: '', maintenanceDue: '', monthYearBuilt: '', hoursRan: '' };
   const dueValue = eq.maintenanceDue ? eq.maintenanceDue.slice(0, 10) : '';
   return `
     <form id="eq-form">
       <div class="form-row two-up">
         <div>
           <label>Unit ID / Number</label>
-          <input name="unitId" value="${eq.unitId || ''}" placeholder="e.g. SS-103" />
+          <input name="unitId" value="${eq.unitId || ''}" placeholder="e.g. TR-3" />
         </div>
         <div>
           <label>Name *</label>
-          <input name="name" required value="${eq.name || ''}" placeholder="e.g. Bobcat Skid Steer" />
+          <input name="name" required value="${eq.name || ''}" placeholder="e.g. TR-3 Crack Sealer" />
         </div>
       </div>
       <div class="form-row two-up">
         <div>
           <label>Type / Category</label>
-          <input name="type" value="${eq.type || ''}" placeholder="Skid Steer, Excavator, etc." />
+          <input name="type" value="${eq.type || ''}" placeholder="TR, Mastic, Crack Pro, SP, etc." />
         </div>
+        <div>
+          <label>Hours Ran</label>
+          <input type="number" name="hoursRan" min="0" step="any" value="${eq.hoursRan || ''}" placeholder="e.g. 1240" />
+        </div>
+      </div>
+      <div class="form-row two-up">
         <div>
           <label>Maintenance Due</label>
           <input type="date" name="maintenanceDue" value="${dueValue}" />
         </div>
-      </div>
-
-      <h3 style="margin:18px 0 8px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;border-top:1px solid var(--border);padding-top:14px;">Build Info</h3>
-      <div class="form-row two-up">
         <div>
-          <label>Year Built</label>
-          <input type="number" name="yearBuilt" min="1900" max="2100" value="${eq.yearBuilt || ''}" placeholder="e.g. 2019" />
-        </div>
-        <div>
-          <label>Make</label>
-          <input name="make" value="${eq.make || ''}" placeholder="e.g. Bobcat" />
-        </div>
-      </div>
-      <div class="form-row two-up">
-        <div>
-          <label>Model</label>
-          <input name="model" value="${eq.model || ''}" placeholder="e.g. S650" />
-        </div>
-        <div>
-          <label>Serial Number</label>
-          <input name="serial" value="${eq.serial || ''}" />
+          <label>Month &amp; Year Built</label>
+          <input type="month" name="monthYearBuilt" value="${eq.monthYearBuilt || ''}" />
         </div>
       </div>
 
@@ -998,7 +1051,7 @@ function rentalForm(r) {
     checklistIn: DEFAULT_CHECKLIST_IN.map(text => ({ text, checked: false })),
     actualReturn: ''
   };
-  const eqOptions = db.equipment.map(eq =>
+  const eqOptions = sortedEquipment().map(eq =>
     `<option value="${eq.id}" ${eq.id === r.equipmentId ? 'selected' : ''}>${eq.name} (${eq.unitId || eq.id})</option>`
   ).join('');
   const status = isEdit ? rentalStatus(r) : 'scheduled';
@@ -1229,7 +1282,7 @@ function bindRentalForm(existing) {
 // ---------- Maintenance flag dialog ----------
 
 function maintenanceFlagForm() {
-  const eqOptions = db.equipment.map(eq => `<option value="${eq.id}">${eq.name}</option>`).join('');
+  const eqOptions = sortedEquipment().map(eq => `<option value="${eq.id}">${eq.name}</option>`).join('');
   return `
     <form id="maint-form">
       <div class="form-row">
@@ -1417,9 +1470,11 @@ document.getElementById('import-file').addEventListener('change', async e => {
 // First-run sample data
 if (!db.equipment.length && !db.rentals.length) {
   const seed = [
-    { id: uid('eq'), unitId: 'SS-101', name: 'Bobcat S650', type: 'Skid Steer', notes: '', maintenance: false, maintenanceNotes: '', maintenanceDue: new Date(Date.now()+45*864e5).toISOString() },
-    { id: uid('eq'), unitId: 'EX-202', name: 'Kubota KX040', type: 'Mini Excavator', notes: '', maintenance: false, maintenanceNotes: '', maintenanceDue: '' },
-    { id: uid('eq'), unitId: 'LF-303', name: 'JLG Boom Lift 60ft', type: 'Lift', notes: '', maintenance: true, maintenanceNotes: 'Hydraulic leak — awaiting parts', maintenanceDue: '' },
+    { id: uid('eq'), unitId: 'TR-1', name: 'TR-1', type: 'TR', hoursRan: '', monthYearBuilt: '', notes: '', maintenance: false, maintenanceNotes: '', maintenanceDue: '' },
+    { id: uid('eq'), unitId: 'TR-2', name: 'TR-2', type: 'TR', hoursRan: '', monthYearBuilt: '', notes: '', maintenance: false, maintenanceNotes: '', maintenanceDue: '' },
+    { id: uid('eq'), unitId: 'MS-1', name: 'Mastic 1', type: 'Mastic', hoursRan: '', monthYearBuilt: '', notes: '', maintenance: false, maintenanceNotes: '', maintenanceDue: '' },
+    { id: uid('eq'), unitId: 'CP-1', name: 'Crack Pro 1', type: 'Crack Pro', hoursRan: '', monthYearBuilt: '', notes: '', maintenance: false, maintenanceNotes: '', maintenanceDue: '' },
+    { id: uid('eq'), unitId: 'SP-1', name: 'SP 1', type: 'SP', hoursRan: '', monthYearBuilt: '', notes: '', maintenance: false, maintenanceNotes: '', maintenanceDue: '' },
   ];
   db.equipment = seed;
   saveDb();
